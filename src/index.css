@@ -1,0 +1,63 @@
+@import url("https://api.fontshare.com/v2/css?f[]=satoshi@500,600,700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --page: 0 0% 5.882%;
+    --card: 0 0% 7.843%;
+    --elevated: 0 0% 11.765%;
+    --border: 0 0% 15.294%;
+    --light-page: 0 0% 97.647%;
+    --light-card: 0 0% 100%;
+    --light-border: 0 0% 89.804%;
+    --link-on-light: 219.529 100% 50%;
+
+    --background: var(--page);
+    --foreground: var(--light-page);
+    --card-foreground: var(--light-page);
+    --input: var(--elevated);
+    --primary: var(--light-page);
+    --primary-foreground: var(--page);
+    --secondary: var(--elevated);
+    --secondary-foreground: var(--light-page);
+    --muted: var(--elevated);
+    --muted-foreground: 0 0% 62%;
+    --accent: var(--elevated);
+    --accent-foreground: var(--light-page);
+    --link: 218.525 100% 65.098%;
+    --ring: var(--link);
+    --destructive: 0 66% 53%;
+    --destructive-foreground: 0 0% 98%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  ::selection {
+    background: hsl(var(--link) / 0.35);
+  }
+}
+
+@layer utilities {
+  .font-numeric {
+    font-variant-numeric: tabular-nums;
+  }
+  .text-link {
+    color: hsl(var(--link));
+  }
+}
