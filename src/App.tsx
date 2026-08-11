@@ -95,10 +95,7 @@ export default function App() {
           keywords: csvValues(keywords),
           translateToEnglish,
         })
-        if (text)
-          setTranscript((previous) =>
-            previous ? `${previous}\n\n${text}` : text,
-          )
+        if (text) setTranscript(text)
       } catch (error) {
         setApiError(
           error instanceof Error
@@ -377,9 +374,7 @@ export default function App() {
 
           <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-link" />
-            Sólo se incluyen flujos para grabaciones ya terminadas; los modelos
-            de transcripción en tiempo real requieren una credencial efímera
-            emitida desde un backend.
+            La transcripción generada puede tener errores. Verifica el texto antes de enviarlo.
           </p>
         </section>
       </div>
