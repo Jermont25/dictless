@@ -333,9 +333,6 @@ export default function App() {
                   >
                     Transcripción
                   </Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Editable antes de copiar. Cada grabación se añade al final.
-                  </p>
                 </div>
                 <div className="flex gap-1">
                   <Button
