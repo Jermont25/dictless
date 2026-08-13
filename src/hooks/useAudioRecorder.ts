@@ -9,6 +9,7 @@ interface UseAudioRecorderResult {
   error: string | null
   start: () => Promise<void>
   stop: () => Promise<Blob | null>
+  cancel: () => Promise<void>
 }
 
 export function useAudioRecorder(): UseAudioRecorderResult {
@@ -24,6 +25,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
+  const shouldDiscardRef = useRef(false)
 
   const cleanup = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
@@ -80,8 +82,10 @@ export function useAudioRecorder(): UseAudioRecorderResult {
         : new MediaRecorder(stream)
 
       chunksRef.current = []
+      shouldDiscardRef.current = false
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
+        if (!shouldDiscardRef.current && e.data.size > 0)
+          chunksRef.current.push(e.data)
       }
       mediaRecorderRef.current = recorder
       recorder.start()
@@ -105,26 +109,39 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     }
   }, [cleanup, trackLevel])
 
-  const stop = useCallback((): Promise<Blob | null> => {
-    return new Promise((resolve) => {
-      const recorder = mediaRecorderRef.current
-      if (!recorder || status !== "recording") {
-        resolve(null)
-        return
-      }
-      setStatus("stopping")
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        })
-        cleanup()
-        setStatus("idle")
-        setLevel(0)
-        resolve(blob.size > 0 ? blob : null)
-      }
-      recorder.stop()
-    })
-  }, [cleanup, status])
+  const finish = useCallback(
+    (shouldDiscard: boolean): Promise<Blob | null> => {
+      return new Promise((resolve) => {
+        const recorder = mediaRecorderRef.current
+        if (!recorder || status !== "recording") {
+          resolve(null)
+          return
+        }
+        setStatus("stopping")
+        shouldDiscardRef.current = shouldDiscard
+        recorder.onstop = () => {
+          const blob = shouldDiscard
+            ? null
+            : new Blob(chunksRef.current, {
+                type: recorder.mimeType || "audio/webm",
+              })
+          chunksRef.current = []
+          cleanup()
+          setStatus("idle")
+          setLevel(0)
+          resolve(blob && blob.size > 0 ? blob : null)
+        }
+        recorder.stop()
+      })
+    },
+    [cleanup, status],
+  )
 
-  return { status, seconds, level, error, start, stop }
+  const stop = useCallback(() => finish(false), [finish])
+
+  const cancel = useCallback(async () => {
+    await finish(true)
+  }, [finish])
+
+  return { status, seconds, level, error, start, stop, cancel }
 }

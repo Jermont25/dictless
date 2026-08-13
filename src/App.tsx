@@ -9,6 +9,7 @@ import {
   Settings2,
   Square,
   Trash2,
+  X,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -108,6 +109,11 @@ export default function App() {
     } else {
       await recorder.start()
     }
+  }
+
+  async function handleCancelRecording() {
+    setApiError(null)
+    await recorder.cancel()
   }
 
   async function handleCopy() {
@@ -294,7 +300,9 @@ export default function App() {
                 isRecording ? { transform: `scale(${ringScale})` } : undefined
               }
               aria-label={
-                isRecording ? "Detener grabación" : "Empezar a grabar"
+                isRecording
+                  ? "Detener y transcribir grabación"
+                  : "Empezar a grabar"
               }
             >
               {busy ? (
@@ -314,6 +322,21 @@ export default function App() {
                 ? operationLabel
                 : "Listo para grabar"}
           </div>
+
+          {isRecording && (
+            <div className="flex flex-col items-center gap-2 animate-fade-in">
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={handleCancelRecording}
+                disabled={busy}
+              >
+                <X data-icon="inline-start" />
+                Cancelar y descartar
+              </Button>
+            </div>
+          )}
 
           {(recorder.error || apiError) && (
             <p className="max-w-md text-center text-sm leading-6 text-destructive">
@@ -371,7 +394,8 @@ export default function App() {
 
           <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-link" />
-            La transcripción generada puede tener errores. Verifica el texto antes de enviarlo.
+            La transcripción generada puede tener errores. Verifica el texto
+            antes de enviarlo.
           </p>
         </section>
       </div>
