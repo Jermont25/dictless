@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react"
 import {
   Check,
+  ChevronDown,
+  Clock3,
   Copy,
   Info,
   Languages,
   Loader2,
   Mic,
+  Save,
   Settings2,
   Square,
   Trash2,
@@ -27,6 +30,11 @@ import {
 } from "@/lib/openai"
 
 const MODEL_STORAGE = "dictado_openai_model"
+const DAY_SCHEDULE_STORAGE = "dictless_day_schedule"
+const DEFAULT_DAY_SCHEDULE = { start: "08:00", end: "18:00" }
+
+type DaySchedule = typeof DEFAULT_DAY_SCHEDULE
+
 const CONTEXT_PRESETS = [
   {
     label: "Mensaje de Slack",
@@ -55,6 +63,285 @@ function csvValues(value: string) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function isValidTime(value: unknown): value is string {
+  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
+}
+
+function readDaySchedule(): DaySchedule {
+  try {
+    const saved = localStorage.getItem(DAY_SCHEDULE_STORAGE)
+    if (!saved) return DEFAULT_DAY_SCHEDULE
+
+    const parsed = JSON.parse(saved) as Partial<DaySchedule>
+    if (isValidTime(parsed.start) && isValidTime(parsed.end)) {
+      return { start: parsed.start, end: parsed.end }
+    }
+  } catch {
+    return DEFAULT_DAY_SCHEDULE
+  }
+
+  return DEFAULT_DAY_SCHEDULE
+}
+
+function timeToMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map(Number)
+  return hours * 60 + minutes
+}
+
+function formatTimeLabel(value: string) {
+  const [hours, minutes] = value.split(":").map(Number)
+  const twelveHour = hours % 12 || 12
+  const period = hours >= 12 ? "p. m." : "a. m."
+  return `${twelveHour}:${minutes.toString().padStart(2, "0")} ${period}`
+}
+
+function formatDuration(totalMinutes: number) {
+  const minutes = Math.max(0, Math.round(totalMinutes))
+  const hours = Math.floor(minutes / 60)
+  const remainder = minutes % 60
+
+  if (hours === 0) return `${remainder} min`
+  if (remainder === 0) return `${hours} h`
+  return `${hours} h ${remainder} min`
+}
+
+function formatCurrentTime(date: Date) {
+  return date.toLocaleTimeString("es-CO", {
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+function getDayProgress(schedule: DaySchedule, date: Date) {
+  const currentMinutes = date.getHours() * 60 + date.getMinutes()
+  const start = timeToMinutes(schedule.start)
+  const end = timeToMinutes(schedule.end)
+  const total = end > start ? end - start : end + 24 * 60 - start
+
+  let elapsed = currentMinutes - start
+  if (end <= start && currentMinutes < end) elapsed += 24 * 60
+  if (end <= start && currentMinutes >= end && currentMinutes < start)
+    elapsed = total
+
+  const boundedElapsed = Math.min(Math.max(elapsed, 0), total)
+  const progress = total > 0 ? (boundedElapsed / total) * 100 : 0
+
+  return {
+    currentMinutes,
+    start,
+    end,
+    total,
+    elapsed: boundedElapsed,
+    remaining: total - boundedElapsed,
+    progress,
+    phase: elapsed < 0 ? "before" : progress >= 100 ? "after" : "active",
+  } as const
+}
+
+function DayProgress() {
+  const [schedule, setSchedule] = useState<DaySchedule>(readDaySchedule)
+  const [draftSchedule, setDraftSchedule] = useState<DaySchedule>(schedule)
+  const [now, setNow] = useState(() => new Date())
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [scheduleError, setScheduleError] = useState("")
+  const [scheduleSaved, setScheduleSaved] = useState(false)
+  const progress = useMemo(() => getDayProgress(schedule, now), [schedule, now])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 30_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  function handleScheduleToggle() {
+    setSettingsOpen((open) => !open)
+    setDraftSchedule(schedule)
+    setScheduleError("")
+    setScheduleSaved(false)
+  }
+
+  function handleScheduleSave() {
+    if (!isValidTime(draftSchedule.start) || !isValidTime(draftSchedule.end)) {
+      setScheduleError("Elige una hora de inicio y una hora de fin.")
+      return
+    }
+
+    if (draftSchedule.start === draftSchedule.end) {
+      setScheduleError("El inicio y el fin deben ser diferentes.")
+      return
+    }
+
+    setSchedule(draftSchedule)
+    let storageError = false
+    try {
+      localStorage.setItem(DAY_SCHEDULE_STORAGE, JSON.stringify(draftSchedule))
+    } catch {
+      storageError = true
+    }
+    setScheduleError(
+      storageError ? "Se aplicó el horario, pero no se pudo guardar." : "",
+    )
+    setScheduleSaved(!storageError)
+    window.setTimeout(() => setScheduleSaved(false), 2500)
+  }
+
+  const headline =
+    progress.phase === "before"
+      ? `En ${formatDuration(progress.start - progress.currentMinutes)}`
+      : progress.phase === "after"
+        ? "Jornada cerrada"
+        : `${Math.round(progress.progress)}%`
+  const subline =
+    progress.phase === "before"
+      ? "para comenzar tu jornada"
+      : progress.phase === "after"
+        ? `Terminó a las ${formatTimeLabel(schedule.end)}`
+        : `de tu jornada · quedan ${formatDuration(progress.remaining)}`
+
+  return (
+    <section
+      className="mb-10 border-b border-border pb-8"
+      aria-label="Progreso del día"
+    >
+      <div className="flex items-start justify-between gap-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            <Clock3 className="h-3.5 w-3.5 text-link" />
+            Tiempo de hoy
+          </div>
+          <p className="mt-4 font-heading text-3xl font-semibold tracking-[-0.035em] md:text-4xl">
+            {headline}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{subline}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-xs text-muted-foreground">Ahora</p>
+          <p className="mt-1 font-numeric text-sm font-medium text-foreground">
+            {formatCurrentTime(now)}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-8" role="group" aria-label="Horario de la jornada">
+        <div
+          className="relative h-2 rounded-full bg-secondary"
+          role="progressbar"
+          aria-label="Progreso de la jornada"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress.progress)}
+        >
+          <div
+            className="absolute inset-y-0 left-0 rounded-full bg-[hsl(var(--link))] transition-all duration-500"
+            style={{ width: `${progress.progress}%` }}
+          />
+          <span
+            className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-foreground shadow-[0_0_0_4px_hsl(var(--link)/0.14),0_2px_8px_rgba(0,0,0,0.35)] transition-all duration-500"
+            style={{ left: `${progress.progress}%` }}
+          />
+        </div>
+        <div className="mt-3 flex justify-between font-numeric text-xs text-muted-foreground">
+          <span>{formatTimeLabel(schedule.start)}</span>
+          <span>{formatTimeLabel(schedule.end)}</span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-3 border-t border-border pt-4">
+        <div className="min-w-0">
+          <p className="font-numeric text-base font-medium text-foreground">
+            {formatDuration(progress.elapsed)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">transcurrido</p>
+        </div>
+        <div className="min-w-0 border-l border-border pl-4">
+          <p className="font-numeric text-base font-medium text-foreground">
+            {formatDuration(progress.remaining)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">restante</p>
+        </div>
+        <div className="min-w-0 border-l border-border pl-4">
+          <p className="font-numeric text-base font-medium text-foreground">
+            {formatDuration(progress.total)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">presupuesto</p>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={handleScheduleToggle}
+          aria-expanded={settingsOpen}
+          aria-controls="day-schedule-settings"
+          className="-ml-3 text-muted-foreground"
+        >
+          Ajustar horario
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${settingsOpen ? "rotate-180" : ""}`}
+          />
+        </Button>
+
+        {settingsOpen && (
+          <div
+            id="day-schedule-settings"
+            className="mt-3 space-y-4 border-t border-border pt-4 animate-fade-in"
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="day-start">Inicio</Label>
+                <Input
+                  id="day-start"
+                  type="time"
+                  value={draftSchedule.start}
+                  onChange={(event) =>
+                    setDraftSchedule((current) => ({
+                      ...current,
+                      start: event.target.value,
+                    }))
+                  }
+                  className="bg-secondary font-numeric"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="day-end">Fin</Label>
+                <Input
+                  id="day-end"
+                  type="time"
+                  value={draftSchedule.end}
+                  onChange={(event) =>
+                    setDraftSchedule((current) => ({
+                      ...current,
+                      end: event.target.value,
+                    }))
+                  }
+                  className="bg-secondary font-numeric"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" size="sm" onClick={handleScheduleSave}>
+                <Save data-icon="inline-start" />
+                Guardar horario
+              </Button>
+              {scheduleSaved && (
+                <span className="flex items-center gap-1.5 text-xs text-link animate-fade-in">
+                  <Check className="h-3.5 w-3.5" /> Horario guardado
+                </span>
+              )}
+              {scheduleError && (
+                <p className="basis-full text-xs text-destructive">
+                  {scheduleError}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
 }
 
 export default function App() {
@@ -150,6 +437,8 @@ export default function App() {
             <Settings2 className="h-5 w-5" />
           </Button>
         </header>
+
+        <DayProgress />
 
         {settingsOpen && (
           <Card className="mb-8 animate-fade-in bg-card shadow-none">
