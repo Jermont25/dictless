@@ -10,6 +10,7 @@ No está preparada para despliegue. El navegador graba el audio y lo envía al p
 - Transcripción al terminar cada grabación.
 - Acumulación de varias transcripciones en un único texto editable.
 - Copia al portapapeles y limpieza manual del texto.
+- Barra de progreso del día con horario configurable y guardado local.
 - Opciones de contexto, idiomas esperados y palabras clave cuando el modelo las admite.
 - Traducción de una grabación al inglés con `whisper-1`.
 - Diarización por hablante con `gpt-4o-transcribe-diarize`.
@@ -35,10 +36,11 @@ El servidor local lee `OPENAI_API_KEY` desde `.env.local` y la añade a las soli
 ## Uso
 
 1. En Ajustes, selecciona el modelo y las opciones que necesites.
-2. Pulsa el botón del micrófono y concede el permiso del navegador.
-3. Pulsa de nuevo el botón para detener la grabación. El audio se transcribe cuando termina la captura.
-4. Revisa o edita el texto resultante; las transcripciones posteriores se añaden al final.
-5. Copia el texto o elimínalo con los botones del panel de transcripción.
+2. Ajusta el horario de tu jornada en la barra de progreso del día si lo necesitas.
+3. Pulsa el botón del micrófono y concede el permiso del navegador.
+4. Pulsa de nuevo el botón para detener la grabación. El audio se transcribe cuando termina la captura.
+5. Revisa o edita el texto resultante; las transcripciones posteriores se añaden al final.
+6. Copia el texto o elimínalo con los botones del panel de transcripción.
 
 ## Modelos disponibles
 
