@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react"
 import {
   Check,
   ChevronDown,
@@ -21,6 +27,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useAudioRecorder } from "@/hooks/useAudioRecorder"
+import { useFocusCycle } from "@/hooks/useFocusCycle"
 import {
   getTranscribeModel,
   isFileTranscribeModel,
@@ -31,9 +38,13 @@ import {
 
 const MODEL_STORAGE = "dictado_openai_model"
 const DAY_SCHEDULE_STORAGE = "dictless_day_schedule"
+const FOCUS_CYCLE_STORAGE = "dictless_focus_cycle"
 const DEFAULT_DAY_SCHEDULE = { start: "08:00", end: "18:00" }
+const DEFAULT_FOCUS_CYCLE = { focusMinutes: 60, breakMinutes: 5 }
+let phaseTransitionContext: AudioContext | null = null
 
 type DaySchedule = typeof DEFAULT_DAY_SCHEDULE
+type FocusCycleSettings = typeof DEFAULT_FOCUS_CYCLE
 type AppSection = "dictation" | "time"
 
 const SECTION_ORDER: AppSection[] = ["dictation", "time"]
@@ -88,6 +99,37 @@ function readDaySchedule(): DaySchedule {
   return DEFAULT_DAY_SCHEDULE
 }
 
+function isValidCycleDuration(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= 240
+  )
+}
+
+function readFocusCycleSettings(): FocusCycleSettings {
+  try {
+    const saved = localStorage.getItem(FOCUS_CYCLE_STORAGE)
+    if (!saved) return DEFAULT_FOCUS_CYCLE
+
+    const parsed = JSON.parse(saved) as Partial<FocusCycleSettings>
+    if (
+      isValidCycleDuration(parsed.focusMinutes) &&
+      isValidCycleDuration(parsed.breakMinutes)
+    ) {
+      return {
+        focusMinutes: parsed.focusMinutes,
+        breakMinutes: parsed.breakMinutes,
+      }
+    }
+  } catch {
+    return DEFAULT_FOCUS_CYCLE
+  }
+
+  return DEFAULT_FOCUS_CYCLE
+}
+
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(":").map(Number)
   return hours * 60 + minutes
@@ -108,6 +150,44 @@ function formatDuration(totalMinutes: number) {
   if (hours === 0) return `${remainder} min`
   if (remainder === 0) return `${hours} h`
   return `${hours} h ${remainder} min`
+}
+
+function getPhaseTransitionContext() {
+  if (!phaseTransitionContext || phaseTransitionContext.state === "closed") {
+    phaseTransitionContext = new AudioContext()
+  }
+
+  return phaseTransitionContext
+}
+
+function preparePhaseTransitionSound() {
+  try {
+    void getPhaseTransitionContext().resume()
+  } catch {
+    return
+  }
+}
+
+function playPhaseTransitionSound() {
+  try {
+    const context = getPhaseTransitionContext()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const now = context.currentTime
+
+    oscillator.type = "sine"
+    oscillator.frequency.setValueAtTime(740, now)
+    oscillator.frequency.exponentialRampToValueAtTime(988, now + 0.16)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
+    oscillator.connect(gain)
+    gain.connect(context.destination)
+    oscillator.start(now)
+    oscillator.stop(now + 0.23)
+  } catch {
+    return
+  }
 }
 
 function formatCurrentTime(date: Date) {
@@ -146,12 +226,54 @@ function getDayProgress(schedule: DaySchedule, date: Date) {
 function DayProgress() {
   const [schedule, setSchedule] = useState<DaySchedule>(readDaySchedule)
   const [draftSchedule, setDraftSchedule] = useState<DaySchedule>(schedule)
+  const [cycleSettings, setCycleSettings] = useState<FocusCycleSettings>(
+    readFocusCycleSettings,
+  )
+  const [draftCycleSettings, setDraftCycleSettings] =
+    useState<FocusCycleSettings>(cycleSettings)
   const [now, setNow] = useState(() => new Date())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [cycleSettingsOpen, setCycleSettingsOpen] = useState(false)
   const [scheduleError, setScheduleError] = useState("")
+  const [cycleError, setCycleError] = useState("")
+  const [cycleMessage, setCycleMessage] = useState("")
   const [scheduleSaved, setScheduleSaved] = useState(false)
   const progress = useMemo(() => getDayProgress(schedule, now), [schedule, now])
   const remainingPercentage = Math.max(0, Math.round(100 - progress.progress))
+  const isScheduleActive = useCallback(
+    () => getDayProgress(schedule, new Date()).phase === "active",
+    [schedule],
+  )
+  const isScheduleClosed = useCallback(
+    () => getDayProgress(schedule, new Date()).phase === "after",
+    [schedule],
+  )
+  const handlePhaseTransition = useCallback(() => {
+    playPhaseTransitionSound()
+  }, [])
+  const cycle = useFocusCycle({
+    focusMinutes: cycleSettings.focusMinutes,
+    breakMinutes: cycleSettings.breakMinutes,
+    isScheduleActive,
+    isScheduleClosed,
+    onPhaseTransition: handlePhaseTransition,
+  })
+  const cyclePhaseLabel = cycle.phase === "focus" ? "Concentración" : "Descanso"
+  const cycleDurationSeconds =
+    (cycle.phase === "focus"
+      ? cycleSettings.focusMinutes
+      : cycleSettings.breakMinutes) * 60
+  const cycleProgress = Math.min(
+    100,
+    Math.max(
+      0,
+      Math.round(
+        ((cycleDurationSeconds - cycle.remainingSeconds) /
+          cycleDurationSeconds) *
+          100,
+      ),
+    ),
+  )
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(new Date()), 30_000)
@@ -188,6 +310,55 @@ function DayProgress() {
     )
     setScheduleSaved(!storageError)
     window.setTimeout(() => setScheduleSaved(false), 2500)
+  }
+
+  function handleCycleSettingsToggle() {
+    setCycleSettingsOpen((open) => !open)
+    setDraftCycleSettings(cycleSettings)
+    setCycleError("")
+  }
+
+  function handleCycleSettingsSave() {
+    if (
+      !isValidCycleDuration(draftCycleSettings.focusMinutes) ||
+      !isValidCycleDuration(draftCycleSettings.breakMinutes)
+    ) {
+      setCycleError("Usa duraciones enteras entre 1 y 240 minutos.")
+      return
+    }
+
+    setCycleSettings(draftCycleSettings)
+    cycle.reset(draftCycleSettings.focusMinutes)
+    try {
+      localStorage.setItem(
+        FOCUS_CYCLE_STORAGE,
+        JSON.stringify(draftCycleSettings),
+      )
+      setCycleError("")
+      setCycleSettingsOpen(false)
+    } catch {
+      setCycleError("Se aplicó el ciclo, pero no se pudo guardar.")
+    }
+  }
+
+  function handleCycleStart() {
+    if (cycle.start()) {
+      preparePhaseTransitionSound()
+      setCycleMessage("")
+      return
+    }
+
+    setCycleMessage("El ciclo solo puede iniciar durante la jornada activa.")
+  }
+
+  function handleCycleResume() {
+    if (cycle.resume()) {
+      preparePhaseTransitionSound()
+      setCycleMessage("")
+      return
+    }
+
+    setCycleMessage("No puedes reanudar el ciclo fuera de la jornada activa.")
   }
 
   const headline =
@@ -347,6 +518,181 @@ function DayProgress() {
           </div>
         )}
       </div>
+
+      <section
+        className="mt-10 border-t border-border pt-7"
+        aria-labelledby="focus-cycle-heading"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="min-w-0">
+            <h2
+              id="focus-cycle-heading"
+              className="font-heading text-lg font-semibold tracking-[-0.02em]"
+            >
+              Ciclo de enfoque
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Alterna concentración y descanso dentro de tu jornada.
+            </p>
+          </div>
+          <p className="rounded-md border border-border bg-secondary px-3 py-2 font-numeric text-xs font-medium text-muted-foreground">
+            {cycleSettings.focusMinutes} min / {cycleSettings.breakMinutes} min
+          </p>
+        </div>
+
+        <div className="mt-7 grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div>
+            <p className="text-sm font-medium text-link">{cyclePhaseLabel}</p>
+            <p className="mt-1 font-numeric text-4xl font-medium tracking-[-0.035em]">
+              {formatTime(cycle.remainingSeconds)}
+            </p>
+            <p
+              className="mt-2 text-sm text-muted-foreground"
+              aria-live="polite"
+            >
+              {cycle.status === "running" && `${cyclePhaseLabel} en curso.`}
+              {cycle.status === "paused" &&
+                `Pausado en ${cyclePhaseLabel.toLowerCase()}.`}
+              {cycle.status === "idle" &&
+                "Presiona iniciar cuando comience tu jornada."}
+              {cycle.status === "complete" &&
+                "La jornada terminó al completar la fase actual."}
+            </p>
+          </div>
+          <div
+            className="relative h-2 overflow-hidden rounded-full bg-secondary sm:w-40"
+            role="progressbar"
+            aria-label={`Progreso de ${cyclePhaseLabel.toLowerCase()}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={cycleProgress}
+            aria-valuetext={`${cycleProgress}% completado, ${formatTime(cycle.remainingSeconds)} restantes`}
+          >
+            <div
+              className="h-full rounded-full bg-[hsl(var(--link))] transition-[width] duration-300"
+              style={{ width: `${cycleProgress}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {(cycle.status === "idle" || cycle.status === "complete") && (
+            <Button type="button" onClick={handleCycleStart}>
+              Iniciar
+            </Button>
+          )}
+          {cycle.status === "running" && (
+            <Button type="button" variant="secondary" onClick={cycle.pause}>
+              Pausar
+            </Button>
+          )}
+          {cycle.status === "paused" && (
+            <Button type="button" onClick={handleCycleResume}>
+              Reanudar
+            </Button>
+          )}
+          {(cycle.status === "running" || cycle.status === "paused") && (
+            <Button type="button" variant="ghost" onClick={() => cycle.reset()}>
+              <Square data-icon="inline-start" />
+              Detener y reiniciar
+            </Button>
+          )}
+          {cycleMessage && (
+            <p className="basis-full text-xs text-destructive" role="status">
+              {cycleMessage}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleCycleSettingsToggle}
+            aria-expanded={cycleSettingsOpen}
+            aria-controls="focus-cycle-settings"
+            disabled={cycle.status === "running" || cycle.status === "paused"}
+            className="-ml-3 text-muted-foreground"
+          >
+            Ajustar ciclo
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${cycleSettingsOpen ? "rotate-180" : ""}`}
+            />
+          </Button>
+
+          {cycleSettingsOpen && (
+            <div
+              id="focus-cycle-settings"
+              className="mt-3 space-y-4 border-t border-border pt-4 animate-fade-in"
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="focus-minutes">Concentración</Label>
+                  <Input
+                    id="focus-minutes"
+                    type="number"
+                    min="1"
+                    max="240"
+                    step="1"
+                    inputMode="numeric"
+                    value={draftCycleSettings.focusMinutes}
+                    onChange={(event) =>
+                      setDraftCycleSettings((current) => ({
+                        ...current,
+                        focusMinutes: Number(event.target.value),
+                      }))
+                    }
+                    aria-describedby="focus-cycle-duration-hint"
+                    className="bg-secondary font-numeric"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="break-minutes">Descanso</Label>
+                  <Input
+                    id="break-minutes"
+                    type="number"
+                    min="1"
+                    max="240"
+                    step="1"
+                    inputMode="numeric"
+                    value={draftCycleSettings.breakMinutes}
+                    onChange={(event) =>
+                      setDraftCycleSettings((current) => ({
+                        ...current,
+                        breakMinutes: Number(event.target.value),
+                      }))
+                    }
+                    aria-describedby="focus-cycle-duration-hint"
+                    className="bg-secondary font-numeric"
+                  />
+                </div>
+              </div>
+              <p
+                id="focus-cycle-duration-hint"
+                className="text-xs text-muted-foreground"
+              >
+                Elige duraciones enteras entre 1 y 240 minutos.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleCycleSettingsSave}
+                >
+                  <Save data-icon="inline-start" />
+                  Guardar ciclo
+                </Button>
+                {cycleError && (
+                  <p className="basis-full text-xs text-destructive">
+                    {cycleError}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
     </section>
   )
 }
